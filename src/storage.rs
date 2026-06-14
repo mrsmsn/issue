@@ -152,24 +152,18 @@ pub fn find_issue_by_id(dir: &Path, id: i64) -> io::Result<Option<(PathBuf, Stri
 }
 
 /// Serializes an issue to its full Markdown-with-frontmatter file content.
+/// Schema is GitHub-aligned: `status` is open/closed, categorization is via
+/// `labels`, and cross-references live in the body (no `type`/`related`).
 pub fn render_issue_file(issue: &Issue, body: &str) -> String {
     let labels = issue.labels.join(", ");
-    let related = issue
-        .related
-        .iter()
-        .map(|n| n.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
     let mut out = String::new();
     out.push_str("---\n");
     out.push_str(&format!("id: {}\n", issue.id));
     out.push_str(&format!("title: \"{}\"\n", escape_double_quotes(&issue.title)));
     out.push_str(&format!("status: {}\n", issue.status));
-    out.push_str(&format!("type: {}\n", issue.r#type));
     out.push_str(&format!("created: {}\n", issue.created));
     out.push_str(&format!("updated: {}\n", issue.updated));
     out.push_str(&format!("labels: [{labels}]\n"));
-    out.push_str(&format!("related: [{related}]\n"));
     out.push_str("---\n");
     if !body.is_empty() {
         out.push('\n');
@@ -282,20 +276,16 @@ mod tests {
             id: 12,
             title: "A \"tricky\" title".to_string(),
             status: "open".to_string(),
-            r#type: "feature".to_string(),
             created: "2026-06-14".to_string(),
             updated: "2026-06-14".to_string(),
             labels: vec!["cli".to_string(), "mvp".to_string()],
-            related: vec![2, 3],
         };
         let text = render_issue_file(&issue, "Hello body");
         let parsed = core::parse_frontmatter(&text).unwrap();
         assert_eq!(parsed.id, 12);
         assert_eq!(parsed.title, "A \"tricky\" title");
         assert_eq!(parsed.status, "open");
-        assert_eq!(parsed.r#type, "feature");
         assert_eq!(parsed.labels, vec!["cli", "mvp"]);
-        assert_eq!(parsed.related, vec![2, 3]);
         assert!(text.contains("Hello body"));
     }
 }

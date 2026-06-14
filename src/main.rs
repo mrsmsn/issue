@@ -90,7 +90,6 @@ fn cmd_init(args: &[String]) -> io::Result<ExitCode> {
 
 struct CreateFlags {
     title: Option<String>,
-    r#type: Option<String>,
     labels: Vec<String>,
     status: Option<String>,
     body: Option<String>,
@@ -99,7 +98,6 @@ struct CreateFlags {
 fn parse_create_flags(args: &[String]) -> Result<CreateFlags, String> {
     let mut f = CreateFlags {
         title: None,
-        r#type: None,
         labels: Vec::new(),
         status: None,
         body: None,
@@ -108,7 +106,6 @@ fn parse_create_flags(args: &[String]) -> Result<CreateFlags, String> {
     while i < args.len() {
         match args[i].as_str() {
             "--title" => f.title = Some(value_after(args, &mut i, "--title")?),
-            "--type" => f.r#type = Some(value_after(args, &mut i, "--type")?),
             "--label" => f.labels.push(value_after(args, &mut i, "--label")?),
             "--status" => f.status = Some(value_after(args, &mut i, "--status")?),
             "--body" => f.body = Some(value_after(args, &mut i, "--body")?),
@@ -122,7 +119,6 @@ fn parse_create_flags(args: &[String]) -> Result<CreateFlags, String> {
 /// True when no create flags were supplied (run interactively).
 fn is_interactive(flags: &CreateFlags) -> bool {
     flags.title.is_none()
-        && flags.r#type.is_none()
         && flags.labels.is_empty()
         && flags.status.is_none()
         && flags.body.is_none()
@@ -130,7 +126,7 @@ fn is_interactive(flags: &CreateFlags) -> bool {
 
 fn cmd_create(args: &[String]) -> io::Result<ExitCode> {
     if wants_help(args) {
-        println!("Usage: issue create [--title T] [--type X] [--label L]... [--status S] [--body TEXT]\n\nWith no flags, prompts interactively for title/type/labels on stdin.");
+        println!("Usage: issue create [--title T] [--label L]... [--status S] [--body TEXT]\n\nWith no flags, prompts interactively for title/labels on stdin.\nStatus is open|closed; categorize with labels (there is no `type`).");
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -151,12 +147,8 @@ fn cmd_create(args: &[String]) -> io::Result<ExitCode> {
             Ok(lines.next().transpose()?.unwrap_or_default().trim().to_string())
         };
         let title = prompt("title")?;
-        let typ = prompt("type")?;
         let labels_line = prompt("labels (comma-separated)")?;
         flags.title = Some(title);
-        if !typ.is_empty() {
-            flags.r#type = Some(typ);
-        }
         flags.labels = labels_line
             .split(',')
             .map(str::trim)
@@ -194,11 +186,9 @@ fn cmd_create(args: &[String]) -> io::Result<ExitCode> {
         id,
         title: title.clone(),
         status,
-        r#type: flags.r#type.unwrap_or_default(),
         created: today.clone(),
         updated: today,
         labels: flags.labels,
-        related: Vec::new(),
     };
 
     let slug = core::slug(&title);
@@ -406,8 +396,9 @@ fn cmd_reopen(args: &[String]) -> io::Result<ExitCode> {
 fn cmd_edit(args: &[String]) -> io::Result<ExitCode> {
     if wants_help(args) {
         println!(
-            "Usage: issue edit <id> [--title T] [--type X] [--status S] \
+            "Usage: issue edit <id> [--title T] [--status S] \
 [--add-label L]... [--remove-label L]... [--body TEXT]\n\n\
+Status is open|closed; categorize with labels (there is no `type`).\n\
 Updates the given fields in place (filename is not renamed) and bumps \
 `updated`. Unknown frontmatter keys and the body are preserved."
         );
@@ -423,7 +414,6 @@ Updates the given fields in place (filename is not renamed) and bumps \
     };
 
     let mut title: Option<String> = None;
-    let mut typ: Option<String> = None;
     let mut status: Option<String> = None;
     let mut add: Vec<String> = Vec::new();
     let mut remove: Vec<String> = Vec::new();
@@ -439,7 +429,6 @@ Updates the given fields in place (filename is not renamed) and bumps \
         }
         let res = match a.as_str() {
             "--title" => value_after(args, &mut i, "--title").map(|v| title = Some(v)),
-            "--type" => value_after(args, &mut i, "--type").map(|v| typ = Some(v)),
             "--status" => value_after(args, &mut i, "--status").map(|v| status = Some(v)),
             "--add-label" => value_after(args, &mut i, "--add-label").map(|v| add.push(v)),
             "--remove-label" => value_after(args, &mut i, "--remove-label").map(|v| remove.push(v)),
@@ -464,14 +453,13 @@ Updates the given fields in place (filename is not renamed) and bumps \
     }
 
     if title.is_none()
-        && typ.is_none()
         && status.is_none()
         && add.is_empty()
         && remove.is_empty()
         && body.is_none()
     {
         eprintln!(
-            "error: nothing to edit (specify --title/--type/--status/--add-label/--remove-label/--body)"
+            "error: nothing to edit (specify --title/--status/--add-label/--remove-label/--body)"
         );
         return Ok(ExitCode::FAILURE);
     }
@@ -480,9 +468,6 @@ Updates the given fields in place (filename is not renamed) and bumps \
         let mut updates: Vec<(&str, String)> = Vec::new();
         if let Some(t) = &title {
             updates.push(("title", quote(t)));
-        }
-        if let Some(ty) = &typ {
-            updates.push(("type", ty.clone()));
         }
         if let Some(s) = &status {
             updates.push(("status", s.clone()));
@@ -547,7 +532,7 @@ Commands:\n\
   create           Create an issue (interactive, or via flags).\n\
   list             List issues (tab-separated), with optional filters.\n\
   view <id>        Print a single issue file.\n\
-  edit <id>        Edit fields in place (title/type/status/labels/body).\n\
+  edit <id>        Edit fields in place (title/status/labels/body).\n\
   close <id>       Set status to closed.\n\
   reopen <id>      Set status to open.\n\
   lint             Detect duplicate ids; exit non-zero if any.\n\

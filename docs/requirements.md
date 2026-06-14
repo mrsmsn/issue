@@ -16,12 +16,14 @@
 
 id: number # 1 始まりの連番整数。ゼロ埋めしない。並びは数値ソートで担保（採番ルールは #1 で決定）
 title: string
-status: open, closed, in-progress, wontfix
-type: string
+status: open, closed   # GitHub 準拠で 2 値のみ。細かい状態（旧 in-progress / wontfix）は label で表現
 created: 2026-06-14
 updated: 2026-06-14
-labels: []
-related: []
+labels: []             # 分類は label に寄せる（旧 type フィールドは廃止し label 化）
+
+# 廃止したフィールド（ADR 0003）:
+#   type    -> label に寄せる（GitHub 準拠）
+#   related -> 本文末尾の `## Related` セクションに `- #N` リンクで記述
 
 ## 構想
 

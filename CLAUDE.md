@@ -13,9 +13,10 @@ Rust was chosen over Go by a head-to-head benchmark — see
 `core::update_frontmatter`): they preserve the body, key order, and any keys not in
 the schema (e.g. a `priority:` field on dogfooding issues). They never rename the
 file — the integer `id` is the stable identity, the filename slug is cosmetic.
-Still **not** implemented: `export` / `import` (blocked on the GitHub field-mapping
-design question — `status` has 4 values vs GitHub's open/closed; `type`/`related`
-have no native GitHub equivalent).
+Still **not** implemented: `export` / `import`. The earlier field-mapping blocker
+is largely gone now that the schema is GitHub-aligned (ADR 0003): `status`
+open/closed maps directly, `labels` map to GitHub labels; `related` is body text.
+The remaining work is the JSON shape and id reconciliation on import.
 
 This is an **OSS project**. Per global instructions, write documentation, commit messages, and code comments in **English** (the requirements doc itself is in Japanese as a working design note).
 
@@ -42,9 +43,10 @@ A **local-first issue-management CLI** (the `issue` command). Issues are stored 
 Key design constraints (from `docs/requirements.md`):
 
 - **CLI surface mirrors `gh issue`** as closely as possible. When designing commands/options/flags, default to matching `gh issue` semantics. GitHub-specific features are explicitly out of scope, *except* that GitHub Issues **export/import** compatibility is a goal.
-- **Issue files are the contract.** Each issue is one Markdown file (`<id>-<slug>.md`) with this frontmatter schema:
-  - `id: integer` (≥1, no zero-padding — see ADR 0001), `title: string`, `status: open | closed | in-progress | wontfix`, `type: string`, `created: <YYYY-MM-DD>`, `updated: <YYYY-MM-DD>`, `labels: []`, `related: []`
-- Issues are created **interactively** by `issue create` (no flags), or non-interactively via `--title/--type/--label/--status/--body`.
+- **Issue files are the contract.** Each issue is one Markdown file (`<id>-<slug>.md`) with this frontmatter schema (GitHub-aligned — see ADR 0003):
+  - `id: integer` (≥1, no zero-padding — see ADR 0001), `title: string`, `status: open | closed`, `created: <YYYY-MM-DD>`, `updated: <YYYY-MM-DD>`, `labels: []`
+  - **No `type`** (categorize with labels) and **no `related`** (cross-reference issues in the body, e.g. a `## Related` section with `- #N` links). Such keys in older files are ignored by the parser, not an error.
+- Issues are created **interactively** by `issue create` (no flags), or non-interactively via `--title/--label/--status/--body`.
 
 ## Resolved design decisions
 

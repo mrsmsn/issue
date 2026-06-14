@@ -21,12 +21,13 @@
 | --- | --- |
 | `id` | 1 始まりの連番整数。ゼロ埋めしない。ファイル名の `N` と一致 |
 | `title` | 1 行サマリ |
-| `status` | `open` / `in-progress` / `closed` / `wontfix` |
-| `type` | `feature` / `bug` / `chore` / `question` / `spike` / `epic` |
-| `priority` | `P0` / `P1` / `P2` / `P3` |
+| `status` | `open` / `closed`（GitHub 準拠の 2 値。ADR 0003） |
+| `priority` | `P0` / `P1` / `P2` / `P3`（任意フィールド） |
 | `created` / `updated` | `YYYY-MM-DD` |
-| `labels` | 関連サービス・領域の配列 |
-| `related` | 関連 issue の `id` 配列 |
+| `labels` | 分類・関連領域の配列。種別（旧 `type`: `bug` / `feature` / `epic` …）も label で表現 |
+
+> `type` / `related` フィールドは廃止（ADR 0003）。種別は `labels` に寄せ、
+> 関連 issue は本文末尾の `## Related` セクションに `- #N` リンクで書く。
 
 ## 本文セクション
 

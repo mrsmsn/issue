@@ -3,15 +3,14 @@
 //! detection. Keeping it free of filesystem access makes it
 //! straightforward to unit-test.
 
-/// Valid status values for an issue.
+/// Valid status values for an issue. GitHub-aligned: an issue is either
+/// open or closed. Finer-grained states (in-progress, wontfix, …) are
+/// expressed with labels, not status.
 pub const STATUS_OPEN: &str = "open";
 pub const STATUS_CLOSED: &str = "closed";
-pub const STATUS_IN_PROGRESS: &str = "in-progress";
-pub const STATUS_WONTFIX: &str = "wontfix";
 
 /// All allowed status values.
-pub const VALID_STATUSES: [&str; 4] =
-    [STATUS_OPEN, STATUS_CLOSED, STATUS_IN_PROGRESS, STATUS_WONTFIX];
+pub const VALID_STATUSES: [&str; 2] = [STATUS_OPEN, STATUS_CLOSED];
 
 /// Reports whether `s` is one of the allowed status values.
 pub fn is_valid_status(s: &str) -> bool {
@@ -21,16 +20,18 @@ pub fn is_valid_status(s: &str) -> bool {
 /// Parsed frontmatter of a single issue file. The body is intentionally
 /// not stored here: list/parse only needs the frontmatter, and the body
 /// is read separately by `view`.
+///
+/// Schema is GitHub-aligned: there is no `type` field (use labels) and no
+/// `related` field (cross-reference issues in the body). Such keys are
+/// ignored if present in older files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Issue {
     pub id: i64,
     pub title: String,
     pub status: String,
-    pub r#type: String,
     pub created: String,
     pub updated: String,
     pub labels: Vec<String>,
-    pub related: Vec<i64>,
 }
 
 /// Converts a title into a filename-safe slug:
@@ -76,10 +77,11 @@ pub fn next_id(existing: &[i64]) -> i64 {
 /// fence (i.e. the file is not an issue file).
 ///
 /// This is a deliberately minimal parser. It handles exactly the keys the
-/// schema defines: `id`, `title`, `status`, `type`, `created`, `updated`,
-/// `labels` and `related`. Surrounding single/double quotes are stripped
-/// from scalar string values. List values use the inline `[a, b]` form
-/// (and the empty `[]` form).
+/// schema defines: `id`, `title`, `status`, `created`, `updated` and
+/// `labels`; any other key (e.g. legacy `type`/`related`, or a `priority`)
+/// is ignored. Surrounding single/double quotes are stripped from scalar
+/// string values. List values use the inline `[a, b]` form (and the empty
+/// `[]` form).
 pub fn parse_frontmatter(content: &str) -> Option<Issue> {
     let mut lines = content.lines();
 
@@ -111,16 +113,11 @@ pub fn parse_frontmatter(content: &str) -> Option<Issue> {
             }
             "title" => issue.title = strip_quotes(raw_value),
             "status" => issue.status = strip_quotes(raw_value),
-            "type" => issue.r#type = strip_quotes(raw_value),
             "created" => issue.created = strip_quotes(raw_value),
             "updated" => issue.updated = strip_quotes(raw_value),
             "labels" => issue.labels = parse_string_list(raw_value),
-            "related" => {
-                issue.related = parse_string_list(raw_value)
-                    .iter()
-                    .filter_map(|s| s.parse::<i64>().ok())
-                    .collect();
-            }
+            // `type` / `related` (and any other key) are ignored; the schema
+            // is GitHub-aligned. Older files keep such lines until rewritten.
             _ => {}
         }
     }
@@ -396,16 +393,15 @@ mod tests {
 
     #[test]
     fn parse_full_frontmatter() {
+        // Legacy `type`/`related` lines are present but must be ignored.
         let content = "---\nid: 1\ntitle: \"Some title\"\nstatus: open\ntype: feature\ncreated: 2026-06-14\nupdated: 2026-06-15\nlabels: [cli, mvp]\nrelated: [2, 3]\n---\n# Body\nhello\n";
         let i = parse_frontmatter(content).expect("should parse");
         assert_eq!(i.id, 1);
         assert_eq!(i.title, "Some title");
         assert_eq!(i.status, "open");
-        assert_eq!(i.r#type, "feature");
         assert_eq!(i.created, "2026-06-14");
         assert_eq!(i.updated, "2026-06-15");
         assert_eq!(i.labels, vec!["cli", "mvp"]);
-        assert_eq!(i.related, vec![2, 3]);
     }
 
     #[test]
@@ -426,11 +422,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_empty_labels_and_related() {
-        let content = "---\nid: 3\ntitle: t\nlabels: []\nrelated: []\n---\n";
+    fn parse_empty_labels() {
+        let content = "---\nid: 3\ntitle: t\nlabels: []\n---\n";
         let i = parse_frontmatter(content).unwrap();
         assert!(i.labels.is_empty());
-        assert!(i.related.is_empty());
     }
 
     #[test]
@@ -515,8 +510,8 @@ mod tests {
 
     #[test]
     fn format_line_matches_spec() {
-        let i = mk(4, "in-progress", &["a", "b"]);
-        assert_eq!(format_list_line(&i), "4\tin-progress\tt4\ta,b");
+        let i = mk(4, "closed", &["a", "b"]);
+        assert_eq!(format_list_line(&i), "4\tclosed\tt4\ta,b");
         let j = mk(5, "open", &[]);
         assert_eq!(format_list_line(&j), "5\topen\tt5\t");
     }
@@ -571,9 +566,9 @@ mod tests {
     fn update_frontmatter_preserves_unknown_keys() {
         // A `priority:` field is not in the schema; it must survive an edit.
         let content = "---\nid: 1\ntitle: \"t\"\npriority: P1\nstatus: open\n---\nbody\n";
-        let out = update_frontmatter(content, &[("status", "wontfix".into())]).unwrap();
+        let out = update_frontmatter(content, &[("status", "closed".into())]).unwrap();
         assert!(out.contains("priority: P1"));
-        assert!(out.contains("status: wontfix"));
+        assert!(out.contains("status: closed"));
     }
 
     #[test]
