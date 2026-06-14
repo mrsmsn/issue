@@ -53,6 +53,16 @@ allowed deps** (ratatui/crossterm/notify). `cargo clippy` needs `rustup componen
 Runtime: the issue directory is `$ISSUE_DIR` if set, else `./issue`. Keep the
 core/storage/ops split intact — pure logic stays I/O-free; mutations go through `ops`.
 
+### Install / release
+
+Distributed via Homebrew: **`brew install mrsmsn/tap/issue`** installs both `issue` and
+`lazyissue` plus shell completions (so `issue <Tab>` works with no `source` line). To cut a
+release: bump `[workspace.package] version`, commit, then `git tag vX.Y.Z && git push origin
+vX.Y.Z`. `.github/workflows/release.yml` (on macOS) guards tag==Cargo version, runs
+`cargo test --workspace --locked`, creates the GitHub Release, and renders
+`.github/templates/issue.rb` → pushes `Formula/issue.rb` to `mrsmsn/homebrew-tap`
+(requires the `HOMEBREW_TAP_TOKEN` repo secret = a PAT with Contents:write on the tap).
+
 ## What this project is
 
 A **local-first issue-management CLI** (the `issue` command). Issues are stored as frontmatter-bearing Markdown files under `$PROJECT_ROOT/issue/`, created via an interactive prompt flow. There is no server or remote backend — everything lives in the repo alongside the code it tracks (compare: `git-bug`, which is the main competitor to differentiate against).
