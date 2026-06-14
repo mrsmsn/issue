@@ -1,14 +1,20 @@
-[package]
-name = "issue"
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/cli", "crates/tui"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "Local-first issue-management CLI (std-only, no external crates)"
 license = "MIT"
 repository = "https://github.com/mrsmsn/issue"
 
-[[bin]]
-name = "issue"
-path = "src/main.rs"
+# Dependencies for the TUI crate are pinned once here and referenced with
+# `workspace = true`. issue-core and the issue CLI take none of these — they
+# stay std-only (ADR 0002, scoped by ADR 0005).
+[workspace.dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+notify = "6"
 
 [profile.release]
 opt-level = 3

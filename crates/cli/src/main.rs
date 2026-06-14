@@ -4,15 +4,13 @@
 //! filter, lint, date) and is fully unit-tested; [`storage`] handles all
 //! filesystem I/O; this file is the thin CLI shell (arg parsing + wiring).
 
-mod core;
-mod json;
-mod storage;
-
 use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use core::Issue;
+use issue_core::core::{self, Issue};
+use issue_core::ops::{self, EditIssue, NewIssue};
+use issue_core::{json, storage};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -168,44 +166,23 @@ fn cmd_create(args: &[String]) -> io::Result<ExitCode> {
         }
     };
 
-    let status = flags.status.unwrap_or_else(|| core::STATUS_OPEN.to_string());
-    if !core::is_valid_status(&status) {
-        eprintln!(
-            "error: invalid status '{status}' (allowed: {})",
-            core::VALID_STATUSES.join(", ")
-        );
-        return Ok(ExitCode::FAILURE);
-    }
-
-    let dir = storage::resolve_issue_dir();
-    std::fs::create_dir_all(&dir)?;
-
-    let existing = storage::load_issues(&dir)?;
-    let ids: Vec<i64> = existing.iter().map(|i| i.id).collect();
-    let id = core::next_id(&ids);
-
-    let today = core::format_date(now_unix());
-    let issue = Issue {
-        id,
-        title: title.clone(),
-        status,
-        created: today.clone(),
-        updated: today,
+    let new = NewIssue {
+        title,
         labels: flags.labels,
+        status: flags.status.unwrap_or_else(|| core::STATUS_OPEN.to_string()),
+        body: flags.body.unwrap_or_default(),
     };
-
-    let slug = core::slug(&title);
-    let filename = if slug.is_empty() {
-        format!("{id}.md")
-    } else {
-        format!("{id}-{slug}.md")
-    };
-    let path = dir.join(&filename);
-    let content = storage::render_issue_file(&issue, flags.body.as_deref().unwrap_or(""));
-    std::fs::write(&path, content)?;
-
-    println!("created issue #{id} at {}", path.display());
-    Ok(ExitCode::SUCCESS)
+    let dir = storage::resolve_issue_dir();
+    match ops::create_issue(&dir, new, now_unix()) {
+        Ok((issue, path)) => {
+            println!("created issue #{} at {}", issue.id, path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::FAILURE)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -323,26 +300,13 @@ fn first_id(args: &[String]) -> Result<i64, String> {
     arg.parse::<i64>().map_err(|_| format!("invalid id '{arg}'"))
 }
 
-/// Loads the issue file for `id`, hands its content and parsed frontmatter to
-/// `apply`, and writes the returned content back to the same path. The
-/// filename is never changed — the id is the stable identity. On success
-/// prints `msg`; reports a not-found / malformed error otherwise.
-fn edit_issue_file(
-    id: i64,
-    msg: &str,
-    apply: impl FnOnce(String, &Issue) -> Result<String, String>,
-) -> io::Result<ExitCode> {
+/// Sets status on the issue with `id` via the shared ops layer, printing the
+/// outcome with the given verb (e.g. "closed issue #3 (path)").
+fn set_status(id: i64, status: &str, verb: &str) -> io::Result<ExitCode> {
     let dir = storage::resolve_issue_dir();
-    let Some((path, content)) = storage::find_issue_by_id(&dir, id)? else {
-        eprintln!("error: no issue found with id {id}");
-        return Ok(ExitCode::FAILURE);
-    };
-    // find_issue_by_id already parsed it once, so this cannot fail.
-    let issue = core::parse_frontmatter(&content).expect("issue frontmatter parses");
-    match apply(content, &issue) {
-        Ok(new_content) => {
-            std::fs::write(&path, new_content)?;
-            println!("{msg} ({})", path.display());
+    match ops::set_status(&dir, id, status, now_unix()) {
+        Ok(path) => {
+            println!("{verb} issue #{id} ({})", path.display());
             Ok(ExitCode::SUCCESS)
         }
         Err(e) => {
@@ -350,22 +314,6 @@ fn edit_issue_file(
             Ok(ExitCode::FAILURE)
         }
     }
-}
-
-/// Renders a frontmatter scalar value, quoting/escaping like a title.
-fn quote(s: &str) -> String {
-    format!("\"{}\"", s.replace('"', "\\\""))
-}
-
-fn set_status(id: i64, status: &str, verb: &str) -> io::Result<ExitCode> {
-    edit_issue_file(id, &format!("{verb} issue #{id}"), |content, _| {
-        let today = core::format_date(now_unix());
-        core::update_frontmatter(
-            &content,
-            &[("status", status.to_string()), ("updated", today)],
-        )
-        .ok_or_else(|| "issue file has malformed frontmatter".to_string())
-    })
 }
 
 fn cmd_close(args: &[String]) -> io::Result<ExitCode> {
@@ -445,16 +393,6 @@ Updates the given fields in place (filename is not renamed) and bumps \
         i += 1;
     }
 
-    if let Some(s) = &status {
-        if !core::is_valid_status(s) {
-            eprintln!(
-                "error: invalid status '{s}' (allowed: {})",
-                core::VALID_STATUSES.join(", ")
-            );
-            return Ok(ExitCode::FAILURE);
-        }
-    }
-
     if title.is_none()
         && status.is_none()
         && add.is_empty()
@@ -467,28 +405,24 @@ Updates the given fields in place (filename is not renamed) and bumps \
         return Ok(ExitCode::FAILURE);
     }
 
-    edit_issue_file(id, &format!("edited issue #{id}"), |content, issue| {
-        let mut updates: Vec<(&str, String)> = Vec::new();
-        if let Some(t) = &title {
-            updates.push(("title", quote(t)));
+    let dir = storage::resolve_issue_dir();
+    let edit = EditIssue {
+        title,
+        status,
+        add_labels: add,
+        remove_labels: remove,
+        body,
+    };
+    match ops::edit_issue(&dir, id, edit, now_unix()) {
+        Ok(path) => {
+            println!("edited issue #{id} ({})", path.display());
+            Ok(ExitCode::SUCCESS)
         }
-        if let Some(s) = &status {
-            updates.push(("status", s.clone()));
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::FAILURE)
         }
-        if !add.is_empty() || !remove.is_empty() {
-            let labels = core::apply_label_changes(&issue.labels, &add, &remove);
-            updates.push(("labels", format!("[{}]", labels.join(", "))));
-        }
-        updates.push(("updated", core::format_date(now_unix())));
-
-        let mut out = core::update_frontmatter(&content, &updates)
-            .ok_or_else(|| "issue file has malformed frontmatter".to_string())?;
-        if let Some(b) = &body {
-            out = core::replace_body(&out, b)
-                .ok_or_else(|| "issue file has malformed frontmatter".to_string())?;
-        }
-        Ok(out)
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -611,13 +545,7 @@ fn cmd_import(args: &[String]) -> io::Result<ExitCode> {
             labels: imp.labels.clone(),
         };
 
-        let slug = core::slug(&issue.title);
-        let filename = if slug.is_empty() {
-            format!("{id}.md")
-        } else {
-            format!("{id}-{slug}.md")
-        };
-        let path = dir.join(&filename);
+        let path = dir.join(ops::issue_filename(id, &issue.title));
         if path.exists() {
             eprintln!("warning: skipping #{id}: {} already exists", path.display());
             continue;

@@ -1,0 +1,11 @@
+[package]
+name = "issue-core"
+description = "Core logic and storage for the issue CLI/TUI (std-only, no external crates)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "issue_core"
+path = "src/lib.rs"

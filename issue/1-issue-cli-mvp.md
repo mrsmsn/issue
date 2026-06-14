@@ -71,7 +71,8 @@ MVP:
 - [x] `issue lint` — 重複 id の検出・警告（実装済み。pre-commit hook / CI 連携は今後）
 - [ ] git-bug との差別化・ポジショニング整理（spike）
 - [ ] コーディングエージェントが本ワークフローに気づきやすくする仕組み（spike）
-- [ ] TUI「LazyIssue」（別 repo 候補として将来検討）
+- [x] TUI「LazyIssue」— `lazyissue` として実装（ratatui、3ペイン、ADR 0005）。
+      別 repo ではなく Cargo workspace（`crates/tui`）で `issue-core` を共有
 
 ## スコープ外
 

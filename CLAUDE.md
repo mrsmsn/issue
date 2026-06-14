@@ -6,15 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The **MVP is implemented in Rust** (`init` / `create` / `list` / `view` / `lint`),
 plus follow-up commands: `edit` / `close` / `reopen` and GitHub `export` / `import`.
+A lazygit-style **TUI `lazyissue`** is also implemented (ADR 0005).
 Rust was chosen over Go by a head-to-head benchmark — see
 `docs/adr/0002-implement-core-in-rust.md` and `bench/`.
+
+The repo is a **Cargo workspace** (ADR 0005):
+- `crates/core` — pkg `issue-core` (lib), **zero external deps** (std-only): modules
+  `core` (pure logic), `storage` (I/O), `ops` (create/edit/close service layer shared by
+  both binaries), `json` (hand-rolled JSON for export/import).
+- `crates/cli` — pkg `issue`, bin `issue`, depends only on `issue-core` → stays std-only/offline.
+- `crates/tui` — pkg `lazyissue`, bin `lazyissue`, depends on `issue-core` + ratatui/crossterm/notify.
 
 `edit`/`close`/`reopen` edit frontmatter **surgically** (line-level, via
 `core::update_frontmatter`): they preserve the body, key order, and any keys not in
 the schema (e.g. a `priority:` field on dogfooding issues). They never rename the
 file — the integer `id` is the stable identity, the filename slug is cosmetic.
-`export` / `import` use GitHub REST-API issue JSON (`src/json.rs` is a hand-rolled,
-std-only JSON parser/serializer — no serde, per ADR 0002). `export` writes a pretty
+`export` / `import` use GitHub REST-API issue JSON (`crates/core/src/json.rs` is a
+hand-rolled, std-only JSON parser/serializer — no serde, per ADR 0002). `export` writes a pretty
 JSON array to stdout; `import [FILE|stdin]` is lenient (snake_case or camelCase keys;
 labels as strings or `{name}` objects) and remaps colliding ids non-destructively
 (`imported #N (was #M)`), never overwriting files. See ADR 0004.
@@ -23,20 +31,25 @@ This is an **OSS project**. Per global instructions, write documentation, commit
 
 ### Layout & commands
 
-- `src/main.rs` — CLI shell: hand-rolled arg parsing, command dispatch, help.
-- `src/core.rs` — **pure logic, no I/O** (slug, id allocation, frontmatter parse, sort/filter, lint, date) — unit-testable; this is the layer a future TUI consumes.
-- `src/storage.rs` — **all filesystem I/O**: issue-dir resolution, concurrent loader, write/render, lookup.
-- `src/json.rs` — hand-rolled std-only JSON parser + pretty serializer (for `export`/`import`).
+- `crates/core/src/{core,storage,ops,json}.rs` — the shared `issue-core` lib (see status above).
+- `crates/cli/src/main.rs` — `issue` CLI shell: arg parsing, command dispatch, help; calls `issue_core::ops`.
+- `crates/tui/src/{main,app,event,ui,form,editor}.rs` — `lazyissue` TUI (ratatui).
 - `bench/` — corpus generator + timing harness (reproducible language benchmark).
 
 ```sh
-cargo build --release     # -> target/release/issue
-cargo test                # 30 tests (core + storage)
+cargo build --release            # -> target/release/{issue, lazyissue}
+cargo test --workspace           # 100 tests (issue-core incl. ops + TUI state logic)
+cargo build -p issue --offline   # proves the CLI stays dependency-free
+cargo run -p lazyissue           # launch the TUI (needs a real terminal)
 ```
 
-**std-only, no external crates** (no `serde`/`clap`) — a deliberate constraint from ADR 0002 for offline, dependency-free builds. Don't add crates without revisiting it. `cargo clippy` needs `rustup component add clippy`. `Cargo.lock` is committed (binary crate).
+**std-only for `issue-core` + the `issue` CLI** (no `serde`/`clap`) — ADR 0002, scoped by
+ADR 0005. Don't add crates to those two without a new ADR. The **TUI is the only crate
+allowed deps** (ratatui/crossterm/notify). `cargo clippy` needs `rustup component add clippy`.
+`Cargo.lock` is committed at the workspace root.
 
-Runtime: the issue directory is `$ISSUE_DIR` if set, else `./issue`. Keep the core/storage split intact — logic stays I/O-free.
+Runtime: the issue directory is `$ISSUE_DIR` if set, else `./issue`. Keep the
+core/storage/ops split intact — pure logic stays I/O-free; mutations go through `ops`.
 
 ## What this project is
 
@@ -57,8 +70,9 @@ Key design constraints (from `docs/requirements.md`):
 ## Open design questions (unresolved — do not assume an answer)
 
 - **Agent-discoverability.** A goal is that a coding agent notices "this repo uses an issue-based workflow" *without* being explicitly told. Factor this into file layout / naming / conventions.
-- **GitHub export/import** field mapping; **git-bug** differentiation; whether to fix the `type` vocabulary or leave it free-form.
+- **git-bug** differentiation/positioning; surfacing the issue workflow to coding agents.
 
-## Future direction (not in this repo yet)
+## Future direction
 
-A TUI app "Lazyissue" (à la Lazygit) is envisioned, possibly in a separate repository. Keep the core CLI/storage layer cleanly separable so a TUI can consume it.
+The TUI `lazyissue` (à la Lazygit) is **implemented** in `crates/tui` (ADR 0005) — it was
+once considered for a separate repo but lives in this workspace, consuming `issue-core`.

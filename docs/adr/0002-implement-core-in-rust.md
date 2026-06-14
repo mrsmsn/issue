@@ -1,10 +1,15 @@
 # 2. Implement the core CLI in Rust (chosen over Go by benchmark)
 
 - Date: 2026-06-14
-- Status: Accepted
+- Status: Accepted (the std-only rule is **scoped by ADR 0005**)
 - Deciders: maintainer
 - Related: `issue/1-issue-cli-mvp.md` (epic), `docs/requirements.md`,
-  `docs/adr/0001-issue-id-is-a-plain-integer.md`
+  `docs/adr/0001-issue-id-is-a-plain-integer.md`,
+  `docs/adr/0005-tui-lazyissue-and-workspace-split.md`
+
+> Update (ADR 0005): "std-only, no external crates" now applies to `issue-core` and
+> the `issue` CLI only. The `lazyissue` TUI is the explicit exception and may depend on
+> ratatui/crossterm/notify.
 
 ## Context
 

@@ -27,7 +27,9 @@ labels: []             # 分類は label に寄せる（旧 type フィールド
 
 ## 構想
 
-- 将来的にTUIアプリLazyissueを作成する（イメージ的にはLazygitに近しい）。別Repoか？
+- ~~将来的にTUIアプリLazyissueを作成する（イメージ的にはLazygitに近しい）。別Repoか？~~
+  → **実装済み**: TUI `lazyissue` を本リポジトリの Cargo workspace（`crates/tui`）に実装。
+  別 repo ではなく workspace で `issue-core` を共有（ADR 0005）。
 
 ## 考えきれてないこと
 
