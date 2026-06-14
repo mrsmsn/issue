@@ -5,7 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 The **MVP is implemented in Rust** (`init` / `create` / `list` / `view` / `lint`),
-plus follow-up commands: `edit` / `close` / `reopen` and GitHub `export` / `import`.
+plus follow-up commands: `edit` / `close` / `reopen`, GitHub `export` / `import`, and
+shell `completions` (bash/zsh/fish; with dynamic id/label/status completion via hidden
+`__complete-ids`/`__complete-labels` helpers — see `crates/cli/src/completions.rs`).
 A lazygit-style **TUI `lazyissue`** is also implemented (ADR 0005).
 Rust was chosen over Go by a head-to-head benchmark — see
 `docs/adr/0002-implement-core-in-rust.md` and `bench/`.

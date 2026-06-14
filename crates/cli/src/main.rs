@@ -4,6 +4,8 @@
 //! filter, lint, date) and is fully unit-tested; [`storage`] handles all
 //! filesystem I/O; this file is the thin CLI shell (arg parsing + wiring).
 
+mod completions;
+
 use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -46,6 +48,10 @@ fn run(args: &[String]) -> io::Result<ExitCode> {
         "lint" => cmd_lint(rest),
         "export" => cmd_export(rest),
         "import" => cmd_import(rest),
+        "completions" => cmd_completions(rest),
+        // Hidden helpers used by the completion scripts for dynamic values.
+        "__complete-ids" => cmd_complete_ids(),
+        "__complete-labels" => cmd_complete_labels(),
         other => {
             eprintln!("error: unknown command '{other}'");
             print_usage();
@@ -570,6 +576,77 @@ fn cmd_import(args: &[String]) -> io::Result<ExitCode> {
 }
 
 // ---------------------------------------------------------------------------
+// completions (+ hidden dynamic-completion helpers)
+// ---------------------------------------------------------------------------
+
+fn cmd_completions(args: &[String]) -> io::Result<ExitCode> {
+    let shell = args.iter().find(|a| !a.starts_with('-'));
+    if wants_help(args) || shell.is_none() {
+        println!(
+            "Usage: issue completions <{}>\n\n\
+Print a shell completion script to stdout (Tab-completes subcommands, flags,\n\
+and — dynamically — issue ids, labels, and statuses).\n\n\
+  bash:  issue completions bash > /usr/local/etc/bash_completion.d/issue\n\
+  zsh:   issue completions zsh > \"${{fpath[1]}}/_issue\"   # then restart zsh\n\
+  fish:  issue completions fish > ~/.config/fish/completions/issue.fish\n\n\
+Or, quickly for the current shell: source <(issue completions zsh)",
+            completions::SHELLS.join("|")
+        );
+        return Ok(if shell.is_none() && !wants_help(args) {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        });
+    }
+    let shell = shell.unwrap();
+    match completions::script(shell) {
+        Some(s) => {
+            print!("{s}");
+            Ok(ExitCode::SUCCESS)
+        }
+        None => {
+            eprintln!(
+                "error: unsupported shell '{shell}' (supported: {})",
+                completions::SHELLS.join(", ")
+            );
+            Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// Hidden: prints `<id>:<title>` per issue (id ascending) for shell completion.
+fn cmd_complete_ids() -> io::Result<ExitCode> {
+    let dir = storage::resolve_issue_dir();
+    let mut issues = storage::load_issues(&dir)?;
+    core::sort_by_id(&mut issues);
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    for issue in &issues {
+        // Titles are single-line; strip any stray control chars defensively.
+        let title: String = issue.title.replace(['\n', '\r', '\t'], " ");
+        writeln!(out, "{}:{}", issue.id, title)?;
+    }
+    out.flush()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Hidden: prints each distinct label (sorted) for shell completion.
+fn cmd_complete_labels() -> io::Result<ExitCode> {
+    let dir = storage::resolve_issue_dir();
+    let issues = storage::load_issues(&dir)?;
+    let mut labels: Vec<String> = issues.into_iter().flat_map(|i| i.labels).collect();
+    labels.sort();
+    labels.dedup();
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    for l in &labels {
+        writeln!(out, "{l}")?;
+    }
+    out.flush()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -597,6 +674,7 @@ Commands:\n\
   lint             Detect duplicate ids; exit non-zero if any.\n\
   export           Print all issues as a GitHub-shaped JSON array.\n\
   import [FILE]    Import issues from GitHub-shaped JSON (file or stdin).\n\
+  completions <sh> Print a shell completion script (bash|zsh|fish).\n\
 \n\
 Issue dir: $ISSUE_DIR if set, else ./issue\n\
 Run `issue <command> --help` for command-specific options."
