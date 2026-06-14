@@ -68,7 +68,7 @@ Contents:write on the tap).
 
 ## What this project is
 
-A **local-first issue-management CLI** (the `issue` command). Issues are stored as frontmatter-bearing Markdown files under `$PROJECT_ROOT/issue/`, created via an interactive prompt flow. There is no server or remote backend — everything lives in the repo alongside the code it tracks (compare: `git-bug`, which is the main competitor to differentiate against).
+A **local-first issue-management CLI** (the `issue` command). Issues are stored as frontmatter-bearing Markdown files under `$PROJECT_ROOT/issue/`, created via an interactive prompt flow. There is no server or remote backend — everything lives in the repo alongside the code it tracks. The main competitor is `git-bug`; the deliberate difference is **plain Markdown files in the working tree (readable by any human/agent with no tool) vs. git-bug's data stored as objects inside git**. Full positioning: `docs/comparison-git-bug.md`.
 
 Key design constraints (from `docs/requirements.md`):
 
@@ -85,7 +85,8 @@ Key design constraints (from `docs/requirements.md`):
 ## Open design questions (unresolved — do not assume an answer)
 
 - **Agent-discoverability.** A goal is that a coding agent notices "this repo uses an issue-based workflow" *without* being explicitly told. Factor this into file layout / naming / conventions.
-- **git-bug** differentiation/positioning; surfacing the issue workflow to coding agents.
+- Surfacing the issue workflow to coding agents (agent-discoverability). (git-bug
+  differentiation is now settled — see `docs/comparison-git-bug.md`.)
 
 ## Future direction
 

@@ -69,7 +69,7 @@ MVP:
 - [x] `issue export`（→ GitHub）— GitHub Issues 互換 JSON 出力（REST API 形状、ADR 0004）
 - [x] `issue import`（← GitHub）— GitHub Issues からの取り込み（snake/camel 両対応、id 衝突は非破壊リマップ）
 - [x] `issue lint` — 重複 id の検出・警告（実装済み。pre-commit hook / CI 連携は今後）
-- [ ] git-bug との差別化・ポジショニング整理（spike）
+- [x] git-bug との差別化・ポジショニング整理（spike）→ `docs/comparison-git-bug.md`
 - [ ] コーディングエージェントが本ワークフローに気づきやすくする仕組み（spike）
 - [x] TUI「LazyIssue」— `lazyissue` として実装（ratatui、3ペイン、ADR 0005）。
       別 repo ではなく Cargo workspace（`crates/tui`）で `issue-core` を共有
@@ -87,7 +87,7 @@ MVP:
 - `docs/adr/0001-issue-id-is-a-plain-integer.md` — id を連番整数（ゼロ埋めなし）にした決定の記録
 - `docs/adr/0002-implement-core-in-rust.md` — コア CLI を Rust で実装する決定の記録
 - `docs/adr/0003-github-aligned-frontmatter-schema.md` — status を open/closed のみにし type/related を廃止した記録
-- 競合: git-bug（差別化は未解決の論点）
+- `docs/comparison-git-bug.md` — 競合 git-bug との差別化・ポジショニング整理
 
 ## 決定事項
 
@@ -105,6 +105,5 @@ MVP:
 
 ## 未解決の論点
 
-- git-bug との差別化・ポジショニング
 - コーディングエージェントが本 issue ワークフローに気づきやすくする仕組み
 - import 時の id 整合の運用（衝突リマップで番号が変わる点の周知）
