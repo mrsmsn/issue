@@ -4,9 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-The **MVP is implemented in Rust** (`init` / `create` / `list` / `view` / `lint`).
+The **MVP is implemented in Rust** (`init` / `create` / `list` / `view` / `lint`),
+plus follow-up status/edit commands (`edit` / `close` / `reopen`).
 Rust was chosen over Go by a head-to-head benchmark — see
 `docs/adr/0002-implement-core-in-rust.md` and `bench/`.
+
+`edit`/`close`/`reopen` edit frontmatter **surgically** (line-level, via
+`core::update_frontmatter`): they preserve the body, key order, and any keys not in
+the schema (e.g. a `priority:` field on dogfooding issues). They never rename the
+file — the integer `id` is the stable identity, the filename slug is cosmetic.
+Still **not** implemented: `export` / `import` (blocked on the GitHub field-mapping
+design question — `status` has 4 values vs GitHub's open/closed; `type`/`related`
+have no native GitHub equivalent).
 
 This is an **OSS project**. Per global instructions, write documentation, commit messages, and code comments in **English** (the requirements doc itself is in Japanese as a working design note).
 

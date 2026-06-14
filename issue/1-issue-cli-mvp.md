@@ -66,7 +66,8 @@ MVP:
 
 後続（MVP の後）:
 
-- [ ] `issue edit` / `close` / `reopen` — status 変更・本文編集
+- [x] `issue edit` / `close` / `reopen` — status 変更・本文編集（実装済み。frontmatter を
+      行単位でサージカル編集し、未知キー・本文・順序を保持。ファイル名はリネームしない）
 - [ ] `issue export`（→ GitHub）— GitHub Issues 互換出力
 - [ ] `issue import`（← GitHub）— GitHub Issues からの取り込み
 - [x] `issue lint` — 重複 id の検出・警告（実装済み。pre-commit hook / CI 連携は今後）

@@ -291,6 +291,7 @@ mod tests {
         let text = render_issue_file(&issue, "Hello body");
         let parsed = core::parse_frontmatter(&text).unwrap();
         assert_eq!(parsed.id, 12);
+        assert_eq!(parsed.title, "A \"tricky\" title");
         assert_eq!(parsed.status, "open");
         assert_eq!(parsed.r#type, "feature");
         assert_eq!(parsed.labels, vec!["cli", "mvp"]);

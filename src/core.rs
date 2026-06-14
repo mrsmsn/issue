@@ -109,11 +109,11 @@ pub fn parse_frontmatter(content: &str) -> Option<Issue> {
                     issue.id = n;
                 }
             }
-            "title" => issue.title = strip_quotes(raw_value).to_string(),
-            "status" => issue.status = strip_quotes(raw_value).to_string(),
-            "type" => issue.r#type = strip_quotes(raw_value).to_string(),
-            "created" => issue.created = strip_quotes(raw_value).to_string(),
-            "updated" => issue.updated = strip_quotes(raw_value).to_string(),
+            "title" => issue.title = strip_quotes(raw_value),
+            "status" => issue.status = strip_quotes(raw_value),
+            "type" => issue.r#type = strip_quotes(raw_value),
+            "created" => issue.created = strip_quotes(raw_value),
+            "updated" => issue.updated = strip_quotes(raw_value),
             "labels" => issue.labels = parse_string_list(raw_value),
             "related" => {
                 issue.related = parse_string_list(raw_value)
@@ -128,16 +128,21 @@ pub fn parse_frontmatter(content: &str) -> Option<Issue> {
 }
 
 /// Strips a single pair of matching surrounding quotes (single or double).
-fn strip_quotes(s: &str) -> &str {
+/// For double-quoted values, `\"` is unescaped back to `"`, exactly
+/// inverting the escaping done when rendering a file.
+fn strip_quotes(s: &str) -> String {
     let bytes = s.as_bytes();
     if bytes.len() >= 2 {
         let first = bytes[0];
         let last = bytes[bytes.len() - 1];
-        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-            return &s[1..s.len() - 1];
+        if first == b'"' && last == b'"' {
+            return s[1..s.len() - 1].replace("\\\"", "\"");
+        }
+        if first == b'\'' && last == b'\'' {
+            return s[1..s.len() - 1].to_string();
         }
     }
-    s
+    s.to_string()
 }
 
 /// Parses an inline YAML list `[a, b, c]` (or `[]`) into trimmed,
@@ -151,7 +156,7 @@ fn parse_string_list(raw: &str) -> Vec<String> {
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| strip_quotes(s).to_string())
+        .map(strip_quotes)
         .collect()
 }
 
@@ -215,6 +220,96 @@ pub fn find_duplicates(entries: &[(i64, String)]) -> Vec<Duplicate> {
             Duplicate { id, files }
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// In-place frontmatter editing (edit / close / reopen)
+// ---------------------------------------------------------------------------
+
+/// Applies surgical updates to an issue file's frontmatter, preserving the
+/// markdown body, the key order, indentation, and crucially any keys NOT in
+/// the schema (e.g. a `priority:` field some issues carry). For each
+/// `(key, value)` pair the existing `key:` line's value is replaced in
+/// place; if the key is absent it is appended just before the closing `---`
+/// fence. `value` is written verbatim after `key: ` (the caller formats
+/// quoting / list brackets). Returns `None` when `content` lacks an opening
+/// or closing frontmatter fence.
+pub fn update_frontmatter(content: &str, updates: &[(&str, String)]) -> Option<String> {
+    let trailing_nl = content.ends_with('\n');
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+    if lines.first().map(|s| s.trim_end()) != Some("---") {
+        return None;
+    }
+    // Bail out if there is no closing fence at all.
+    (1..lines.len()).find(|&i| lines[i].trim_end() == "---")?;
+
+    for (key, val) in updates {
+        let close = (1..lines.len()).find(|&i| lines[i].trim_end() == "---")?;
+        let mut found = false;
+        for line in lines.iter_mut().take(close).skip(1) {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix(*key) {
+                if rest.trim_start().starts_with(':') {
+                    let indent = line[..line.len() - trimmed.len()].to_string();
+                    *line = format!("{indent}{key}: {val}");
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            lines.insert(close, format!("{key}: {val}"));
+        }
+    }
+
+    let mut out = lines.join("\n");
+    if trailing_nl {
+        out.push('\n');
+    }
+    Some(out)
+}
+
+/// Replaces the markdown body (everything after the closing frontmatter
+/// fence) with `new_body`, preserving the frontmatter verbatim. A single
+/// blank line separates the frontmatter from a non-empty body and the
+/// result ends with a newline. Returns `None` when there is no closing
+/// fence.
+pub fn replace_body(content: &str, new_body: &str) -> Option<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.first().map(|s| s.trim_end()) != Some("---") {
+        return None;
+    }
+    let close = (1..lines.len()).find(|&i| lines[i].trim_end() == "---")?;
+    let mut out = String::new();
+    for line in &lines[..=close] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    let body = new_body.trim_start_matches('\n');
+    if !body.is_empty() {
+        out.push('\n');
+        out.push_str(body);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    Some(out)
+}
+
+/// Returns `labels` with `add` appended and `remove` filtered out, deduped
+/// while preserving first-seen order. A label present in both an existing
+/// set and `remove` is dropped; one in both `add` and `remove` is dropped.
+pub fn apply_label_changes(labels: &[String], add: &[String], remove: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for l in labels.iter().chain(add.iter()) {
+        if remove.iter().any(|r| r == l) {
+            continue;
+        }
+        if !out.iter().any(|x| x == l) {
+            out.push(l.clone());
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +415,14 @@ mod tests {
         assert_eq!(i.title, "Quoted title");
         assert_eq!(i.id, 7);
         assert_eq!(i.status, "closed");
+    }
+
+    #[test]
+    fn parse_unescapes_double_quotes_in_title() {
+        // `title: "a \"q\" title"` must round-trip to `a "q" title`.
+        let content = "---\nid: 1\ntitle: \"a \\\"q\\\" title\"\n---\n";
+        let i = parse_frontmatter(content).unwrap();
+        assert_eq!(i.title, "a \"q\" title");
     }
 
     #[test]
@@ -445,6 +548,74 @@ mod tests {
         assert_eq!(dups[0].files, vec!["1-a.md", "1-z.md"]);
         assert_eq!(dups[1].id, 2);
         assert_eq!(dups[1].files, vec!["2-b.md", "2-x.md", "2-y.md"]);
+    }
+
+    // --- frontmatter editing ----------------------------------------------
+
+    #[test]
+    fn update_frontmatter_replaces_existing_field_and_keeps_body() {
+        let content = "---\nid: 1\ntitle: \"t\"\nstatus: open\nupdated: 2026-01-01\n---\n\n## Body\nkeep me\n";
+        let out = update_frontmatter(
+            content,
+            &[("status", "closed".into()), ("updated", "2026-06-14".into())],
+        )
+        .unwrap();
+        assert!(out.contains("status: closed"));
+        assert!(out.contains("updated: 2026-06-14"));
+        assert!(!out.contains("status: open"));
+        assert!(out.contains("## Body\nkeep me"));
+        assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn update_frontmatter_preserves_unknown_keys() {
+        // A `priority:` field is not in the schema; it must survive an edit.
+        let content = "---\nid: 1\ntitle: \"t\"\npriority: P1\nstatus: open\n---\nbody\n";
+        let out = update_frontmatter(content, &[("status", "wontfix".into())]).unwrap();
+        assert!(out.contains("priority: P1"));
+        assert!(out.contains("status: wontfix"));
+    }
+
+    #[test]
+    fn update_frontmatter_appends_missing_key_before_fence() {
+        let content = "---\nid: 1\ntitle: \"t\"\n---\nbody\n";
+        let out = update_frontmatter(content, &[("updated", "2026-06-14".into())]).unwrap();
+        // Re-parsing round-trips the new value, and the body is intact.
+        assert_eq!(parse_frontmatter(&out).unwrap().updated, "2026-06-14");
+        assert!(out.contains("body"));
+    }
+
+    #[test]
+    fn update_frontmatter_none_without_fences() {
+        assert!(update_frontmatter("no fence\n", &[("status", "open".into())]).is_none());
+        assert!(update_frontmatter("---\nid: 1\nno close\n", &[("status", "x".into())]).is_none());
+    }
+
+    #[test]
+    fn replace_body_swaps_body_keeps_frontmatter() {
+        let content = "---\nid: 1\ntitle: \"t\"\n---\n\nold body\n";
+        let out = replace_body(content, "new body").unwrap();
+        let parsed = parse_frontmatter(&out).unwrap();
+        assert_eq!(parsed.id, 1);
+        assert!(out.contains("new body"));
+        assert!(!out.contains("old body"));
+    }
+
+    #[test]
+    fn replace_body_empty_clears_body() {
+        let content = "---\nid: 1\n---\n\nstuff\n";
+        let out = replace_body(content, "").unwrap();
+        assert_eq!(out, "---\nid: 1\n---\n");
+    }
+
+    #[test]
+    fn apply_label_changes_adds_removes_and_dedups() {
+        let cur = vec!["cli".to_string(), "mvp".to_string()];
+        let got = apply_label_changes(&cur, &["perf".into(), "cli".into()], &["mvp".into()]);
+        assert_eq!(got, vec!["cli", "perf"]); // mvp removed, cli not duplicated
+        let removed_both =
+            apply_label_changes(&cur, &["x".into()], &["x".into(), "cli".into(), "mvp".into()]);
+        assert!(removed_both.is_empty());
     }
 
     // --- date -------------------------------------------------------------

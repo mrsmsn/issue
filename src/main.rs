@@ -41,6 +41,9 @@ fn run(args: &[String]) -> io::Result<ExitCode> {
         "create" => cmd_create(rest),
         "list" => cmd_list(rest),
         "view" => cmd_view(rest),
+        "edit" => cmd_edit(rest),
+        "close" => cmd_close(rest),
+        "reopen" => cmd_reopen(rest),
         "lint" => cmd_lint(rest),
         other => {
             eprintln!("error: unknown command '{other}'");
@@ -101,16 +104,6 @@ fn parse_create_flags(args: &[String]) -> Result<CreateFlags, String> {
         status: None,
         body: None,
     };
-    // Returns the value that follows the flag at index `i`, advancing `i`
-    // past it. Errors when no value is present.
-    fn value_after(args: &[String], i: &mut usize, name: &str) -> Result<String, String> {
-        if *i + 1 >= args.len() {
-            return Err(format!("flag {name} requires a value"));
-        }
-        *i += 1;
-        Ok(args[*i].clone())
-    }
-
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -314,6 +307,203 @@ fn cmd_view(args: &[String]) -> io::Result<ExitCode> {
 }
 
 // ---------------------------------------------------------------------------
+// edit / close / reopen (in-place frontmatter edits)
+// ---------------------------------------------------------------------------
+
+/// Returns the value following the flag at index `*i`, advancing `*i` past
+/// it. Errors when no value is present. (Free function to avoid a closure
+/// holding a mutable borrow of the index across the arg loop.)
+fn value_after(args: &[String], i: &mut usize, name: &str) -> Result<String, String> {
+    if *i + 1 >= args.len() {
+        return Err(format!("flag {name} requires a value"));
+    }
+    *i += 1;
+    Ok(args[*i].clone())
+}
+
+/// First positional (non-flag) argument parsed as an id.
+fn first_id(args: &[String]) -> Result<i64, String> {
+    let arg = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .ok_or("an <id> argument is required")?;
+    arg.parse::<i64>().map_err(|_| format!("invalid id '{arg}'"))
+}
+
+/// Loads the issue file for `id`, hands its content and parsed frontmatter to
+/// `apply`, and writes the returned content back to the same path. The
+/// filename is never changed — the id is the stable identity. On success
+/// prints `msg`; reports a not-found / malformed error otherwise.
+fn edit_issue_file(
+    id: i64,
+    msg: &str,
+    apply: impl FnOnce(String, &Issue) -> Result<String, String>,
+) -> io::Result<ExitCode> {
+    let dir = storage::resolve_issue_dir();
+    let Some((path, content)) = storage::find_issue_by_id(&dir, id)? else {
+        eprintln!("error: no issue found with id {id}");
+        return Ok(ExitCode::FAILURE);
+    };
+    // find_issue_by_id already parsed it once, so this cannot fail.
+    let issue = core::parse_frontmatter(&content).expect("issue frontmatter parses");
+    match apply(content, &issue) {
+        Ok(new_content) => {
+            std::fs::write(&path, new_content)?;
+            println!("{msg} ({})", path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// Renders a frontmatter scalar value, quoting/escaping like a title.
+fn quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('"', "\\\""))
+}
+
+fn set_status(id: i64, status: &str, verb: &str) -> io::Result<ExitCode> {
+    edit_issue_file(id, &format!("{verb} issue #{id}"), |content, _| {
+        let today = core::format_date(now_unix());
+        core::update_frontmatter(
+            &content,
+            &[("status", status.to_string()), ("updated", today)],
+        )
+        .ok_or_else(|| "issue file has malformed frontmatter".to_string())
+    })
+}
+
+fn cmd_close(args: &[String]) -> io::Result<ExitCode> {
+    if wants_help(args) {
+        println!("Usage: issue close <id>\n\nSet status to `closed` and bump `updated`.");
+        return Ok(ExitCode::SUCCESS);
+    }
+    match first_id(args) {
+        Ok(id) => set_status(id, core::STATUS_CLOSED, "closed"),
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+fn cmd_reopen(args: &[String]) -> io::Result<ExitCode> {
+    if wants_help(args) {
+        println!("Usage: issue reopen <id>\n\nSet status to `open` and bump `updated`.");
+        return Ok(ExitCode::SUCCESS);
+    }
+    match first_id(args) {
+        Ok(id) => set_status(id, core::STATUS_OPEN, "reopened"),
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+fn cmd_edit(args: &[String]) -> io::Result<ExitCode> {
+    if wants_help(args) {
+        println!(
+            "Usage: issue edit <id> [--title T] [--type X] [--status S] \
+[--add-label L]... [--remove-label L]... [--body TEXT]\n\n\
+Updates the given fields in place (filename is not renamed) and bumps \
+`updated`. Unknown frontmatter keys and the body are preserved."
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let id = match first_id(args) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    let mut title: Option<String> = None;
+    let mut typ: Option<String> = None;
+    let mut status: Option<String> = None;
+    let mut add: Vec<String> = Vec::new();
+    let mut remove: Vec<String> = Vec::new();
+    let mut body: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].clone();
+        // Skip the positional id (the only non-flag argument).
+        if !a.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        let res = match a.as_str() {
+            "--title" => value_after(args, &mut i, "--title").map(|v| title = Some(v)),
+            "--type" => value_after(args, &mut i, "--type").map(|v| typ = Some(v)),
+            "--status" => value_after(args, &mut i, "--status").map(|v| status = Some(v)),
+            "--add-label" => value_after(args, &mut i, "--add-label").map(|v| add.push(v)),
+            "--remove-label" => value_after(args, &mut i, "--remove-label").map(|v| remove.push(v)),
+            "--body" => value_after(args, &mut i, "--body").map(|v| body = Some(v)),
+            other => Err(format!("unknown flag '{other}'")),
+        };
+        if let Err(e) = res {
+            eprintln!("error: {e}");
+            return Ok(ExitCode::FAILURE);
+        }
+        i += 1;
+    }
+
+    if let Some(s) = &status {
+        if !core::is_valid_status(s) {
+            eprintln!(
+                "error: invalid status '{s}' (allowed: {})",
+                core::VALID_STATUSES.join(", ")
+            );
+            return Ok(ExitCode::FAILURE);
+        }
+    }
+
+    if title.is_none()
+        && typ.is_none()
+        && status.is_none()
+        && add.is_empty()
+        && remove.is_empty()
+        && body.is_none()
+    {
+        eprintln!(
+            "error: nothing to edit (specify --title/--type/--status/--add-label/--remove-label/--body)"
+        );
+        return Ok(ExitCode::FAILURE);
+    }
+
+    edit_issue_file(id, &format!("edited issue #{id}"), |content, issue| {
+        let mut updates: Vec<(&str, String)> = Vec::new();
+        if let Some(t) = &title {
+            updates.push(("title", quote(t)));
+        }
+        if let Some(ty) = &typ {
+            updates.push(("type", ty.clone()));
+        }
+        if let Some(s) = &status {
+            updates.push(("status", s.clone()));
+        }
+        if !add.is_empty() || !remove.is_empty() {
+            let labels = core::apply_label_changes(&issue.labels, &add, &remove);
+            updates.push(("labels", format!("[{}]", labels.join(", "))));
+        }
+        updates.push(("updated", core::format_date(now_unix())));
+
+        let mut out = core::update_frontmatter(&content, &updates)
+            .ok_or_else(|| "issue file has malformed frontmatter".to_string())?;
+        if let Some(b) = &body {
+            out = core::replace_body(&out, b)
+                .ok_or_else(|| "issue file has malformed frontmatter".to_string())?;
+        }
+        Ok(out)
+    })
+}
+
+// ---------------------------------------------------------------------------
 // lint
 // ---------------------------------------------------------------------------
 
@@ -357,6 +547,9 @@ Commands:\n\
   create           Create an issue (interactive, or via flags).\n\
   list             List issues (tab-separated), with optional filters.\n\
   view <id>        Print a single issue file.\n\
+  edit <id>        Edit fields in place (title/type/status/labels/body).\n\
+  close <id>       Set status to closed.\n\
+  reopen <id>      Set status to open.\n\
   lint             Detect duplicate ids; exit non-zero if any.\n\
 \n\
 Issue dir: $ISSUE_DIR if set, else ./issue\n\
