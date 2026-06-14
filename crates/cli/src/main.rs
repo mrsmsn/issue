@@ -36,6 +36,11 @@ fn run(args: &[String]) -> io::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    if cmd == "--version" || cmd == "-V" {
+        println!("issue {}", env!("CARGO_PKG_VERSION"));
+        return Ok(ExitCode::SUCCESS);
+    }
+
     let rest = &args[1..];
     match cmd.as_str() {
         "init" => cmd_init(rest),

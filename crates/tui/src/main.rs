@@ -45,6 +45,18 @@ impl Drop for TerminalGuard {
 }
 
 fn main() -> ExitCode {
+    // Handle --version / --help before touching the terminal, so these work
+    // without a TTY (and so the Homebrew formula's `test do` can run them).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("lazyissue {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return ExitCode::SUCCESS;
+    }
+
     install_panic_hook();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -53,6 +65,23 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Prints a short, non-interactive help summary (the live TUI shows `?` help).
+fn print_help() {
+    println!(
+        "lazyissue {} — lazygit-style TUI for the issue tool\n\
+\n\
+Usage: lazyissue            # launches the TUI for $ISSUE_DIR (else ./issue)\n\
+       lazyissue --version\n\
+       lazyissue --help\n\
+\n\
+Keys: j/k move  Tab panes  c close  o reopen  n new  e edit  b body($EDITOR)\n\
+      / search  R reload  ? help  q quit\n\
+\n\
+Issue dir: $ISSUE_DIR if set, else ./issue",
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 /// Restores the terminal before the default panic message is printed, so a
