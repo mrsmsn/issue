@@ -302,6 +302,109 @@ fn draw_help(frame: &mut Frame) {
     frame.render_widget(p, area);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use issue_core::core::Issue;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use std::path::PathBuf;
+
+    fn issue(id: i64, title: &str, status: &str, labels: &[&str]) -> Issue {
+        Issue {
+            id,
+            title: title.to_string(),
+            status: status.to_string(),
+            created: "2026-06-14".to_string(),
+            updated: "2026-06-14".to_string(),
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// Renders the app to an off-screen buffer and returns it as text.
+    fn render(app: &App, w: u16, h: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let mut s = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                s.push_str(buffer[(x, y)].symbol());
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    fn sample_app() -> App {
+        App::with_issues(
+            PathBuf::from("/tmp/x"),
+            vec![
+                issue(1, "CLI MVP epic", "open", &["cli", "mvp"]),
+                issue(2, "Fix the parser", "closed", &["bug"]),
+                issue(3, "日本語タイトルの確認", "open", &["docs"]),
+            ],
+        )
+    }
+
+    #[test]
+    fn renders_three_panes_with_content() {
+        let out = render(&sample_app(), 100, 24);
+        assert!(out.contains("Filters"));
+        assert!(out.contains("Issues"));
+        assert!(out.contains("Detail"));
+        assert!(out.contains("Open"));
+        assert!(out.contains("CLI MVP epic")); // an open issue shows under the default Open filter
+        assert!(out.contains("j/k move")); // footer hints
+    }
+
+    #[test]
+    fn renders_cjk_title_without_panic() {
+        // Switch to the All filter so the CJK issue is visible, then render.
+        let mut app = sample_app();
+        app.filter = StatusFilter::All;
+        app.recompute_visible();
+        let out = render(&app, 100, 24);
+        // The double-width chars land in non-adjacent buffer cells (the second
+        // half is a continuation cell), so assert on a single CJK char: it
+        // proves the title reached the buffer and rendering didn't panic.
+        assert!(out.contains('日'));
+    }
+
+    #[test]
+    fn renders_empty_list_hint() {
+        let app = App::with_issues(PathBuf::from("/tmp/x"), vec![]);
+        let out = render(&app, 80, 20);
+        assert!(out.contains("No issues match") || out.contains("Press 'n'"));
+    }
+
+    #[test]
+    fn renders_modal_when_open() {
+        let mut app = sample_app();
+        app.open_create_form();
+        let out = render(&app, 100, 24);
+        assert!(out.contains("Title"));
+        assert!(out.contains("Labels"));
+        assert!(out.contains("Status"));
+    }
+
+    #[test]
+    fn renders_help_overlay() {
+        let mut app = sample_app();
+        app.show_help = true;
+        let out = render(&app, 100, 24);
+        assert!(out.contains("Help"));
+        assert!(out.contains("quit"));
+    }
+
+    #[test]
+    fn renders_in_a_small_terminal_without_panic() {
+        // Tiny size must not panic (layout/area math stays in bounds).
+        let _ = render(&sample_app(), 20, 6);
+    }
+}
+
 /// A centered rect taking `pct_x` / `pct_y` percent of `r`.
 fn centered_rect(pct_x: u16, pct_y: u16, r: Rect) -> Rect {
     let vertical = Layout::default()
