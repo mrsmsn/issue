@@ -66,8 +66,8 @@ MVP:
 
 - [x] `issue edit` / `close` / `reopen` — status 変更・本文編集（実装済み。frontmatter を
       行単位でサージカル編集し、未知キー・本文・順序を保持。ファイル名はリネームしない）
-- [ ] `issue export`（→ GitHub）— GitHub Issues 互換出力
-- [ ] `issue import`（← GitHub）— GitHub Issues からの取り込み
+- [x] `issue export`（→ GitHub）— GitHub Issues 互換 JSON 出力（REST API 形状、ADR 0004）
+- [x] `issue import`（← GitHub）— GitHub Issues からの取り込み（snake/camel 両対応、id 衝突は非破壊リマップ）
 - [x] `issue lint` — 重複 id の検出・警告（実装済み。pre-commit hook / CI 連携は今後）
 - [ ] git-bug との差別化・ポジショニング整理（spike）
 - [ ] コーディングエージェントが本ワークフローに気づきやすくする仕組み（spike）
@@ -106,5 +106,4 @@ MVP:
 
 - git-bug との差別化・ポジショニング
 - コーディングエージェントが本 issue ワークフローに気づきやすくする仕組み
-- export / import の GitHub 互換仕様（フィールドのマッピング）
-- frontmatter `type` の語彙を固定するか、自由文字列のままにするか
+- import 時の id 整合の運用（衝突リマップで番号が変わる点の周知）

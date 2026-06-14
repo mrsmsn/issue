@@ -341,6 +341,167 @@ pub fn format_date(secs: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+// ---------------------------------------------------------------------------
+// Export / import mapping (pure; the GitHub-shaped JSON layer)
+// ---------------------------------------------------------------------------
+
+use crate::json::Json;
+
+/// Returns the markdown body that follows the closing `---` frontmatter fence.
+/// Leading blank lines are trimmed and trailing whitespace is trimmed. Returns
+/// an empty string when the content has no frontmatter (no opening fence) or no
+/// closing fence.
+pub fn body_after_frontmatter(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.first().map(|s| s.trim_end()) != Some("---") {
+        return String::new();
+    }
+    let Some(close) = (1..lines.len()).find(|&i| lines[i].trim_end() == "---") else {
+        return String::new();
+    };
+    let body = lines[close + 1..].join("\n");
+    body.trim_start_matches('\n').trim_end().to_string()
+}
+
+/// Maps a single issue + body to its GitHub-shaped JSON object. The shape
+/// mirrors a GitHub REST issue object closely enough to round-trip through
+/// import: `number`, `title`, `state`, `state_reason`, `labels`
+/// (`[{"name": …}]`), `created_at`/`updated_at` (ISO timestamps at midnight
+/// UTC) and `body`.
+pub fn issue_to_json(issue: &Issue, body: &str) -> Json {
+    let state_reason = if issue.status == STATUS_CLOSED {
+        Json::Str("completed".to_string())
+    } else {
+        Json::Null
+    };
+    let labels = issue
+        .labels
+        .iter()
+        .map(|l| Json::Obj(vec![("name".to_string(), Json::Str(l.clone()))]))
+        .collect();
+    Json::Obj(vec![
+        ("number".to_string(), Json::Num(issue.id as f64)),
+        ("title".to_string(), Json::Str(issue.title.clone())),
+        ("state".to_string(), Json::Str(issue.status.clone())),
+        ("state_reason".to_string(), state_reason),
+        ("labels".to_string(), Json::Arr(labels)),
+        (
+            "created_at".to_string(),
+            Json::Str(format!("{}T00:00:00Z", issue.created)),
+        ),
+        (
+            "updated_at".to_string(),
+            Json::Str(format!("{}T00:00:00Z", issue.updated)),
+        ),
+        ("body".to_string(), Json::Str(body.to_string())),
+    ])
+}
+
+/// Serializes a slice of `(Issue, body)` to a pretty JSON array string (the
+/// `export` payload). Caller is responsible for ordering the input.
+pub fn issues_to_json_array(issues: &[(Issue, String)]) -> String {
+    let arr = Json::Arr(
+        issues
+            .iter()
+            .map(|(issue, body)| issue_to_json(issue, body))
+            .collect(),
+    );
+    crate::json::to_pretty(&arr)
+}
+
+/// A single issue decoded from import JSON, before id reconciliation. `number`
+/// is the source id (may be `None`); the caller decides whether to keep it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedIssue {
+    pub number: Option<i64>,
+    pub title: String,
+    pub status: String,
+    pub labels: Vec<String>,
+    pub created: String,
+    pub updated: String,
+    pub body: String,
+}
+
+/// Parses an import payload (a JSON array of GitHub-shaped issue objects) into
+/// [`ImportedIssue`] records. Accepts both the REST snake_case form
+/// (`created_at`) and the `gh`/GraphQL camelCase form (`createdAt`), and labels
+/// either as plain strings or as `{"name": …}` objects. `today` supplies the
+/// default `created` date for issues lacking one.
+///
+/// `status` is normalized to GitHub's two states: `closed` when `state` is
+/// `"closed"`, otherwise `open`. Returns `Err` when the root is not an array or
+/// an element is not an object.
+pub fn parse_imported(root: &Json, today: &str) -> Result<Vec<ImportedIssue>, String> {
+    let arr = root
+        .as_array()
+        .ok_or_else(|| "import root must be a JSON array".to_string())?;
+    let mut out = Vec::with_capacity(arr.len());
+    for (i, elem) in arr.iter().enumerate() {
+        if !matches!(elem, Json::Obj(_)) {
+            return Err(format!("array element {i} is not an object"));
+        }
+        let title = elem.get("title").and_then(Json::as_str).unwrap_or("").to_string();
+        let status = match elem.get("state").and_then(Json::as_str) {
+            Some("closed") => STATUS_CLOSED.to_string(),
+            _ => STATUS_OPEN.to_string(),
+        };
+        let labels = parse_imported_labels(elem.get("labels"));
+        let body = match elem.get("body") {
+            Some(Json::Str(s)) => s.clone(),
+            _ => String::new(), // null, missing, or non-string → empty
+        };
+        let number = elem.get("number").and_then(Json::as_i64);
+        let created = elem
+            .get("created_at")
+            .or_else(|| elem.get("createdAt"))
+            .and_then(Json::as_str)
+            .map(date_part)
+            .unwrap_or_else(|| today.to_string());
+        let updated = elem
+            .get("updated_at")
+            .or_else(|| elem.get("updatedAt"))
+            .and_then(Json::as_str)
+            .map(date_part)
+            .unwrap_or_else(|| created.clone());
+        out.push(ImportedIssue {
+            number,
+            title,
+            status,
+            labels,
+            created,
+            updated,
+            body,
+        });
+    }
+    Ok(out)
+}
+
+/// Extracts label names from an optional `labels` value, accepting an array of
+/// strings OR an array of `{"name": …}` objects. Non-string / nameless entries
+/// are skipped; a missing or non-array value yields no labels.
+fn parse_imported_labels(value: Option<&Json>) -> Vec<String> {
+    let Some(Json::Arr(items)) = value else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Json::Str(s) => Some(s.clone()),
+            Json::Obj(_) => item.get("name").and_then(Json::as_str).map(str::to_string),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns the date portion of an ISO timestamp: the text before the first
+/// `T`, or the first 10 characters when there is no `T`.
+fn date_part(s: &str) -> String {
+    match s.find('T') {
+        Some(idx) => s[..idx].to_string(),
+        None => s.chars().take(10).collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,5 +793,171 @@ mod tests {
     fn date_leap_day() {
         // 2024-02-29 00:00:00 UTC == 1709164800
         assert_eq!(format_date(1_709_164_800), "2024-02-29");
+    }
+
+    // --- body_after_frontmatter -------------------------------------------
+
+    #[test]
+    fn body_after_fence_trims_blanks_and_trailing() {
+        let content = "---\nid: 1\n---\n\n\nHello body\n\n";
+        assert_eq!(body_after_frontmatter(content), "Hello body");
+    }
+
+    #[test]
+    fn body_after_fence_multiline_preserved() {
+        let content = "---\nid: 1\n---\n\nline 1\nline 2\n";
+        assert_eq!(body_after_frontmatter(content), "line 1\nline 2");
+    }
+
+    #[test]
+    fn body_after_fence_empty_when_no_body() {
+        assert_eq!(body_after_frontmatter("---\nid: 1\n---\n"), "");
+    }
+
+    #[test]
+    fn body_after_fence_empty_without_frontmatter() {
+        assert_eq!(body_after_frontmatter("# Just markdown\ntext\n"), "");
+        assert_eq!(body_after_frontmatter("---\nid: 1\nno close\n"), "");
+    }
+
+    // --- export mapping ---------------------------------------------------
+
+    fn mk_full(id: i64, status: &str, labels: &[&str]) -> Issue {
+        Issue {
+            id,
+            title: "Title".to_string(),
+            status: status.to_string(),
+            created: "2026-06-14".to_string(),
+            updated: "2026-06-15".to_string(),
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn issue_to_json_open_shape() {
+        let j = issue_to_json(&mk_full(7, "open", &["bug"]), "the body");
+        assert_eq!(j.get("number").unwrap().as_i64(), Some(7));
+        assert_eq!(j.get("title").unwrap().as_str(), Some("Title"));
+        assert_eq!(j.get("state").unwrap().as_str(), Some("open"));
+        assert_eq!(j.get("state_reason"), Some(&Json::Null));
+        assert_eq!(
+            j.get("created_at").unwrap().as_str(),
+            Some("2026-06-14T00:00:00Z")
+        );
+        assert_eq!(
+            j.get("updated_at").unwrap().as_str(),
+            Some("2026-06-15T00:00:00Z")
+        );
+        assert_eq!(j.get("body").unwrap().as_str(), Some("the body"));
+        let labels = j.get("labels").unwrap().as_array().unwrap();
+        assert_eq!(labels[0].get("name").unwrap().as_str(), Some("bug"));
+    }
+
+    #[test]
+    fn issue_to_json_closed_has_completed_reason() {
+        let j = issue_to_json(&mk_full(1, "closed", &[]), "");
+        assert_eq!(j.get("state_reason").unwrap().as_str(), Some("completed"));
+        assert!(j.get("labels").unwrap().as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn issues_to_json_array_is_valid_json() {
+        let pairs = vec![
+            (mk_full(1, "open", &["a"]), "b1".to_string()),
+            (mk_full(2, "closed", &[]), "b2".to_string()),
+        ];
+        let s = issues_to_json_array(&pairs);
+        let parsed = crate::json::parse(&s).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[1].get("number").unwrap().as_i64(), Some(2));
+    }
+
+    // --- import mapping ---------------------------------------------------
+
+    #[test]
+    fn parse_imported_rest_snake_case() {
+        let input = r#"[
+            {"number": 5, "title": "Bug", "state": "closed",
+             "labels": [{"name": "bug"}, {"name": "p1"}],
+             "created_at": "2025-01-02T03:04:05Z",
+             "updated_at": "2025-02-03T00:00:00Z",
+             "body": "details"}
+        ]"#;
+        let root = crate::json::parse(input).unwrap();
+        let got = parse_imported(&root, "2026-06-14").unwrap();
+        assert_eq!(got.len(), 1);
+        let i = &got[0];
+        assert_eq!(i.number, Some(5));
+        assert_eq!(i.title, "Bug");
+        assert_eq!(i.status, "closed");
+        assert_eq!(i.labels, vec!["bug", "p1"]);
+        assert_eq!(i.created, "2025-01-02");
+        assert_eq!(i.updated, "2025-02-03");
+        assert_eq!(i.body, "details");
+    }
+
+    #[test]
+    fn parse_imported_gh_camel_case_and_string_labels() {
+        let input = r#"[
+            {"number": 9, "title": "Feat", "state": "open",
+             "labels": ["enhancement", "ui"],
+             "createdAt": "2024-12-31T10:00:00Z",
+             "updatedAt": "2025-01-01T10:00:00Z"}
+        ]"#;
+        let root = crate::json::parse(input).unwrap();
+        let got = parse_imported(&root, "2026-06-14").unwrap();
+        let i = &got[0];
+        assert_eq!(i.number, Some(9));
+        assert_eq!(i.status, "open");
+        assert_eq!(i.labels, vec!["enhancement", "ui"]);
+        assert_eq!(i.created, "2024-12-31");
+        assert_eq!(i.updated, "2025-01-01");
+        assert_eq!(i.body, "");
+    }
+
+    #[test]
+    fn parse_imported_missing_fields_defaults() {
+        // No number, no dates, null body, no labels.
+        let input = r#"[{"state": "open", "body": null}]"#;
+        let root = crate::json::parse(input).unwrap();
+        let got = parse_imported(&root, "2026-06-14").unwrap();
+        let i = &got[0];
+        assert_eq!(i.number, None);
+        assert_eq!(i.title, "");
+        assert_eq!(i.status, "open");
+        assert!(i.labels.is_empty());
+        assert_eq!(i.created, "2026-06-14"); // defaults to today
+        assert_eq!(i.updated, "2026-06-14"); // defaults to created
+        assert_eq!(i.body, "");
+    }
+
+    #[test]
+    fn parse_imported_updated_defaults_to_created() {
+        let input = r#"[{"title": "t", "created_at": "2025-05-05T00:00:00Z"}]"#;
+        let root = crate::json::parse(input).unwrap();
+        let got = parse_imported(&root, "2026-06-14").unwrap();
+        assert_eq!(got[0].created, "2025-05-05");
+        assert_eq!(got[0].updated, "2025-05-05");
+    }
+
+    #[test]
+    fn parse_imported_skips_non_string_labels() {
+        let input = r#"[{"title": "t", "labels": ["ok", 42, {"noname": "x"}, {"name": "good"}]}]"#;
+        let root = crate::json::parse(input).unwrap();
+        let got = parse_imported(&root, "2026-06-14").unwrap();
+        assert_eq!(got[0].labels, vec!["ok", "good"]);
+    }
+
+    #[test]
+    fn parse_imported_non_array_root_errors() {
+        let root = crate::json::parse(r#"{"not": "an array"}"#).unwrap();
+        assert!(parse_imported(&root, "2026-06-14").is_err());
+    }
+
+    #[test]
+    fn parse_imported_non_object_element_errors() {
+        let root = crate::json::parse(r#"[1, 2, 3]"#).unwrap();
+        assert!(parse_imported(&root, "2026-06-14").is_err());
     }
 }

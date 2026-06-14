@@ -64,6 +64,25 @@ pub fn load_issues_with_files(dir: &Path) -> io::Result<Vec<(Issue, String)>> {
     Ok(parse_paths_parallel_with_files(paths))
 }
 
+/// Reads every issue file in `dir`, returning each parsed issue paired with
+/// its markdown body (everything after the closing frontmatter fence). Used by
+/// `export`. Files that fail to read or lack frontmatter are skipped. The
+/// returned vector is unordered; callers sort as needed.
+pub fn load_issues_with_bodies(dir: &Path) -> io::Result<Vec<(Issue, String)>> {
+    let mut out = Vec::new();
+    for path in list_md_files(dir)? {
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if let Some(issue) = core::parse_frontmatter(&content) {
+            let body = core::body_after_frontmatter(&content);
+            out.push((issue, body));
+        }
+    }
+    Ok(out)
+}
+
 fn worker_count(n_items: usize) -> usize {
     let avail = thread::available_parallelism()
         .map(|n| n.get())

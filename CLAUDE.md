@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 The **MVP is implemented in Rust** (`init` / `create` / `list` / `view` / `lint`),
-plus follow-up status/edit commands (`edit` / `close` / `reopen`).
+plus follow-up commands: `edit` / `close` / `reopen` and GitHub `export` / `import`.
 Rust was chosen over Go by a head-to-head benchmark — see
 `docs/adr/0002-implement-core-in-rust.md` and `bench/`.
 
@@ -13,10 +13,11 @@ Rust was chosen over Go by a head-to-head benchmark — see
 `core::update_frontmatter`): they preserve the body, key order, and any keys not in
 the schema (e.g. a `priority:` field on dogfooding issues). They never rename the
 file — the integer `id` is the stable identity, the filename slug is cosmetic.
-Still **not** implemented: `export` / `import`. The earlier field-mapping blocker
-is largely gone now that the schema is GitHub-aligned (ADR 0003): `status`
-open/closed maps directly, `labels` map to GitHub labels; `related` is body text.
-The remaining work is the JSON shape and id reconciliation on import.
+`export` / `import` use GitHub REST-API issue JSON (`src/json.rs` is a hand-rolled,
+std-only JSON parser/serializer — no serde, per ADR 0002). `export` writes a pretty
+JSON array to stdout; `import [FILE|stdin]` is lenient (snake_case or camelCase keys;
+labels as strings or `{name}` objects) and remaps colliding ids non-destructively
+(`imported #N (was #M)`), never overwriting files. See ADR 0004.
 
 This is an **OSS project**. Per global instructions, write documentation, commit messages, and code comments in **English** (the requirements doc itself is in Japanese as a working design note).
 
@@ -25,6 +26,7 @@ This is an **OSS project**. Per global instructions, write documentation, commit
 - `src/main.rs` — CLI shell: hand-rolled arg parsing, command dispatch, help.
 - `src/core.rs` — **pure logic, no I/O** (slug, id allocation, frontmatter parse, sort/filter, lint, date) — unit-testable; this is the layer a future TUI consumes.
 - `src/storage.rs` — **all filesystem I/O**: issue-dir resolution, concurrent loader, write/render, lookup.
+- `src/json.rs` — hand-rolled std-only JSON parser + pretty serializer (for `export`/`import`).
 - `bench/` — corpus generator + timing harness (reproducible language benchmark).
 
 ```sh

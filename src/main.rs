@@ -5,9 +5,10 @@
 //! filesystem I/O; this file is the thin CLI shell (arg parsing + wiring).
 
 mod core;
+mod json;
 mod storage;
 
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -45,6 +46,8 @@ fn run(args: &[String]) -> io::Result<ExitCode> {
         "close" => cmd_close(rest),
         "reopen" => cmd_reopen(rest),
         "lint" => cmd_lint(rest),
+        "export" => cmd_export(rest),
+        "import" => cmd_import(rest),
         other => {
             eprintln!("error: unknown command '{other}'");
             print_usage();
@@ -511,6 +514,134 @@ fn cmd_lint(args: &[String]) -> io::Result<ExitCode> {
 }
 
 // ---------------------------------------------------------------------------
+// export
+// ---------------------------------------------------------------------------
+
+fn cmd_export(args: &[String]) -> io::Result<ExitCode> {
+    if wants_help(args) {
+        println!("Usage: issue export\n\nPrint all issues as a GitHub-shaped JSON array on stdout,\nsorted by id ascending. Round-trips with `issue import`.");
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let dir = storage::resolve_issue_dir();
+    let mut issues = storage::load_issues_with_bodies(&dir)?;
+    issues.sort_by(|a, b| a.0.id.cmp(&b.0.id));
+    let json = core::issues_to_json_array(&issues);
+
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    out.write_all(json.as_bytes())?;
+    out.write_all(b"\n")?;
+    out.flush()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+// ---------------------------------------------------------------------------
+// import
+// ---------------------------------------------------------------------------
+
+fn cmd_import(args: &[String]) -> io::Result<ExitCode> {
+    if wants_help(args) {
+        println!("Usage: issue import [FILE]\n\nImport issues from a GitHub-shaped JSON array (REST or `gh` form).\nReads FILE if given, otherwise stdin. Each issue is written to a new\n`<id>-<slug>.md` file; existing files are never overwritten. Ids are\nreconciled: a source `number` is kept when free, else a fresh id is\nassigned (max+1).");
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    // Optional positional FILE (the only non-flag argument).
+    let file = args.iter().find(|a| !a.starts_with('-'));
+    let input = match file {
+        Some(path) => std::fs::read_to_string(path)?,
+        None => {
+            let mut buf = String::new();
+            io::stdin().lock().read_to_string(&mut buf)?;
+            buf
+        }
+    };
+
+    let root = match json::parse(&input) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: invalid JSON: {e}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    let today = core::format_date(now_unix());
+    let imported = match core::parse_imported(&root, &today) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    let dir = storage::resolve_issue_dir();
+    std::fs::create_dir_all(&dir)?;
+
+    // Seed the used-id set from existing issues so we never collide on disk.
+    let existing = storage::load_issues(&dir)?;
+    let mut used: Vec<i64> = existing.iter().map(|i| i.id).collect();
+
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    let mut count = 0usize;
+
+    for imp in &imported {
+        // Id reconciliation: keep the source number when present and free,
+        // otherwise assign max(used)+1. Track each assignment so the batch
+        // stays internally consistent.
+        let (id, remapped) = match imp.number {
+            Some(n) if !used.contains(&n) => (n, false),
+            _ => (core::next_id(&used), true),
+        };
+        used.push(id);
+
+        // Status is open/closed by construction, but validate defensively.
+        let status = if core::is_valid_status(&imp.status) {
+            imp.status.clone()
+        } else {
+            core::STATUS_OPEN.to_string()
+        };
+
+        let issue = Issue {
+            id,
+            title: imp.title.clone(),
+            status,
+            created: imp.created.clone(),
+            updated: imp.updated.clone(),
+            labels: imp.labels.clone(),
+        };
+
+        let slug = core::slug(&issue.title);
+        let filename = if slug.is_empty() {
+            format!("{id}.md")
+        } else {
+            format!("{id}-{slug}.md")
+        };
+        let path = dir.join(&filename);
+        if path.exists() {
+            eprintln!("warning: skipping #{id}: {} already exists", path.display());
+            continue;
+        }
+        let content = storage::render_issue_file(&issue, &imp.body);
+        std::fs::write(&path, content)?;
+
+        match (remapped, imp.number) {
+            (true, Some(orig)) => {
+                writeln!(out, "imported #{id} (was #{orig}) \"{}\"", issue.title)?;
+            }
+            _ => {
+                writeln!(out, "imported #{id} \"{}\"", issue.title)?;
+            }
+        }
+        count += 1;
+    }
+
+    writeln!(out, "{count} issue(s) imported")?;
+    out.flush()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -536,6 +667,8 @@ Commands:\n\
   close <id>       Set status to closed.\n\
   reopen <id>      Set status to open.\n\
   lint             Detect duplicate ids; exit non-zero if any.\n\
+  export           Print all issues as a GitHub-shaped JSON array.\n\
+  import [FILE]    Import issues from GitHub-shaped JSON (file or stdin).\n\
 \n\
 Issue dir: $ISSUE_DIR if set, else ./issue\n\
 Run `issue <command> --help` for command-specific options."
