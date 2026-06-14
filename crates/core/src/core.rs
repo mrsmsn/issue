@@ -41,8 +41,7 @@ pub struct Issue {
 ///
 /// "Alphanumeric" is judged by Unicode letter/digit (via
 /// [`char::is_alphanumeric`]), so accented or non-ASCII letters are
-/// preserved (lowercased) rather than dropped. This mirrors the Go
-/// implementation for a fair comparison.
+/// preserved (lowercased) rather than dropped.
 pub fn slug(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut prev_dash = false;

@@ -9,8 +9,8 @@ plus follow-up commands: `edit` / `close` / `reopen`, GitHub `export` / `import`
 shell `completions` (bash/zsh/fish; with dynamic id/label/status completion via hidden
 `__complete-ids`/`__complete-labels` helpers — see `crates/cli/src/completions.rs`).
 A lazygit-style **TUI `lazyissue`** is also implemented (ADR 0005).
-Rust was chosen over Go by a head-to-head benchmark — see
-`docs/adr/0002-implement-core-in-rust.md` and `bench/`.
+Rust is the chosen implementation language (rationale recorded in
+`docs/adr/0002-implement-core-in-rust.md`).
 
 The repo is a **Cargo workspace** (ADR 0005):
 - `crates/core` — pkg `issue-core` (lib), **zero external deps** (std-only): modules
@@ -36,7 +36,6 @@ This is an **OSS project**. Per global instructions, write documentation, commit
 - `crates/core/src/{core,storage,ops,json}.rs` — the shared `issue-core` lib (see status above).
 - `crates/cli/src/main.rs` — `issue` CLI shell: arg parsing, command dispatch, help; calls `issue_core::ops`.
 - `crates/tui/src/{main,app,event,ui,form,editor}.rs` — `lazyissue` TUI (ratatui).
-- `bench/` — corpus generator + timing harness (reproducible language benchmark).
 
 ```sh
 cargo build --release            # -> target/release/{issue, lazyissue}

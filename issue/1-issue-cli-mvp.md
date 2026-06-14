@@ -85,7 +85,7 @@ MVP:
 
 - `docs/requirements.md` — 構想・利用想定・frontmatter 案
 - `docs/adr/0001-issue-id-is-a-plain-integer.md` — id を連番整数（ゼロ埋めなし）にした決定の記録
-- `docs/adr/0002-implement-core-in-rust.md` — Go/Rust ベンチで Rust 採用した記録
+- `docs/adr/0002-implement-core-in-rust.md` — コア CLI を Rust で実装する決定の記録
 - `docs/adr/0003-github-aligned-frontmatter-schema.md` — status を open/closed のみにし type/related を廃止した記録
 - 競合: git-bug（差別化は未解決の論点）
 
