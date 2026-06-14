@@ -1,5 +1,7 @@
 # issue
 
+*English | [日本語](README.ja.md)*
+
 **A local-first issue tracker that lives in your repo.** Issues are plain
 frontmatter-bearing Markdown files under `issue/` — one file per issue, versioned
 alongside the code they track. No server, no remote backend, no account. Just files.
