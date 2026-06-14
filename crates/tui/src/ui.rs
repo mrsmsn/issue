@@ -279,6 +279,11 @@ fn draw_help(frame: &mut Frame) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
     let lines = vec![
+        Line::from(Span::styled(
+            format!("lazyissue {}", env!("CARGO_PKG_VERSION")),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
         Line::from("Navigation"),
         Line::from("  j / Down, k / Up   move selection"),
         Line::from("  g / G              first / last"),

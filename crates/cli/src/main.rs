@@ -37,8 +37,7 @@ fn run(args: &[String]) -> io::Result<ExitCode> {
     }
 
     if cmd == "--version" || cmd == "-V" {
-        println!("issue {}", env!("CARGO_PKG_VERSION"));
-        return Ok(ExitCode::SUCCESS);
+        return cmd_version();
     }
 
     let rest = &args[1..];
@@ -54,6 +53,7 @@ fn run(args: &[String]) -> io::Result<ExitCode> {
         "export" => cmd_export(rest),
         "import" => cmd_import(rest),
         "completions" => cmd_completions(rest),
+        "version" => cmd_version(),
         // Hidden helpers used by the completion scripts for dynamic values.
         "__complete-ids" => cmd_complete_ids(),
         "__complete-labels" => cmd_complete_labels(),
@@ -655,6 +655,12 @@ fn cmd_complete_labels() -> io::Result<ExitCode> {
 // helpers
 // ---------------------------------------------------------------------------
 
+/// Prints the version. Backs both the `version` subcommand and `--version`/`-V`.
+fn cmd_version() -> io::Result<ExitCode> {
+    println!("issue {}", env!("CARGO_PKG_VERSION"));
+    Ok(ExitCode::SUCCESS)
+}
+
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -680,6 +686,7 @@ Commands:\n\
   export           Print all issues as a GitHub-shaped JSON array.\n\
   import [FILE]    Import issues from GitHub-shaped JSON (file or stdin).\n\
   completions <sh> Print a shell completion script (bash|zsh|fish).\n\
+  version          Print the version (also: --version, -V).\n\
 \n\
 Issue dir: $ISSUE_DIR if set, else ./issue\n\
 Run `issue <command> --help` for command-specific options."
