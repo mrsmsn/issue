@@ -39,7 +39,7 @@ This is an **OSS project**. Per global instructions, write documentation, commit
 
 ```sh
 cargo build --release            # -> target/release/{issue, lazyissue}
-cargo test --workspace           # 100 tests (issue-core incl. ops + TUI state logic)
+cargo test --workspace           # 109 tests (issue-core incl. ops + TUI state/render logic)
 cargo build -p issue --offline   # proves the CLI stays dependency-free
 cargo run -p lazyissue           # launch the TUI (needs a real terminal)
 ```
@@ -54,13 +54,17 @@ core/storage/ops split intact — pure logic stays I/O-free; mutations go throug
 
 ### Install / release
 
-Distributed via Homebrew: **`brew install mrsmsn/tap/issue`** installs both `issue` and
-`lazyissue` plus shell completions (so `issue <Tab>` works with no `source` line). To cut a
-release: bump `[workspace.package] version`, commit, then `git tag vX.Y.Z && git push origin
-vX.Y.Z`. `.github/workflows/release.yml` (on macOS) guards tag==Cargo version, runs
-`cargo test --workspace --locked`, creates the GitHub Release, and renders
-`.github/templates/issue.rb` → pushes `Formula/issue.rb` to `mrsmsn/homebrew-tap`
-(requires the `HOMEBREW_TAP_TOKEN` repo secret = a PAT with Contents:write on the tap).
+Distributed via Homebrew with **prebuilt binaries** (ADR 0006): **`brew install
+mrsmsn/tap/issue`** downloads a per-arch tarball (no compile) and installs both `issue`
+and `lazyissue` plus shell completions (so `issue <Tab>` works with no `source` line).
+To cut a release: bump `[workspace.package] version`, run `cargo build` to refresh
+`Cargo.lock`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+`.github/workflows/release.yml` (on macOS) guards tag==Cargo version, runs
+`cargo test --workspace --locked`, **cross-builds arm64+amd64** and uploads
+`issue_<ver>_darwin_{arm64,amd64}.tar.gz` + `checksums.txt` to the GitHub Release, then
+renders `.github/templates/issue.rb` (version + both sha256) → pushes `Formula/issue.rb`
+to `mrsmsn/homebrew-tap` (requires the `HOMEBREW_TAP_TOKEN` secret = PAT with
+Contents:write on the tap).
 
 ## What this project is
 

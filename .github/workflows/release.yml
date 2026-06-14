@@ -6,15 +6,17 @@ on:
       - "v*"
 
 permissions:
-  contents: write # create the GitHub Release in this repo
+  contents: write # create the GitHub Release + upload assets
 
 jobs:
   release:
-    runs-on: macos-14 # Apple Silicon, matching the supported target
+    runs-on: macos-14 # Apple Silicon; cross-builds x86_64 via the universal SDK
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Check tag matches Cargo version
         run: |
@@ -29,23 +31,37 @@ jobs:
       - name: Test (gate)
         run: cargo test --workspace --locked
 
-      - name: Create GitHub release
+      - name: Build release binaries (arm64 + amd64) and package
+        id: build
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          build() { # $1=rust-target  $2=brew-arch
+            rustup target add "$1"
+            cargo build --release --locked --target "$1" -p issue -p lazyissue
+            tar -C "target/$1/release" -czf "dist/issue_${ver}_darwin_$2.tar.gz" issue lazyissue
+          }
+          build aarch64-apple-darwin arm64
+          build x86_64-apple-darwin  amd64
+          ( cd dist && shasum -a 256 *.tar.gz | tee checksums.txt )
+          {
+            echo "arm64=$(awk '/darwin_arm64/{print $1}' dist/checksums.txt)"
+            echo "amd64=$(awk '/darwin_amd64/{print $1}' dist/checksums.txt)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release with binary assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
-
-      - name: Compute source tarball sha256
-        id: sha
         run: |
-          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
-          sha="$(curl -fsSL "$url" | shasum -a 256 | cut -d' ' -f1)"
-          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
-          echo "source sha256: $sha"
+          gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME" \
+            dist/issue_*.tar.gz dist/checksums.txt
 
       - name: Render and push formula to the tap
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          set -euo pipefail
           if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
             echo "::error::HOMEBREW_TAP_TOKEN secret is not set (need a PAT with Contents:write on mrsmsn/homebrew-tap)"
             exit 1
@@ -55,7 +71,8 @@ jobs:
             "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/mrsmsn/homebrew-tap.git" tap
           mkdir -p tap/Formula
           sed -e "s/@VERSION@/${ver}/g" \
-              -e "s/@SHA256@/${{ steps.sha.outputs.sha256 }}/g" \
+              -e "s/@SHA256_ARM64@/${{ steps.build.outputs.arm64 }}/g" \
+              -e "s/@SHA256_AMD64@/${{ steps.build.outputs.amd64 }}/g" \
               .github/templates/issue.rb > tap/Formula/issue.rb
           cd tap
           git config user.name "github-actions[bot]"
